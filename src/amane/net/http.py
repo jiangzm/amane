@@ -63,6 +63,8 @@ _IMPERSONATE_REJECTED_STATUSES = frozenset({403, 406})
 _MAX_IMPERSONATE_ROTATIONS = 3
 """单次请求最多轮换的指纹数. 与重试预算分开计, 因此被拦时单次调用最多发出 4 次请求."""
 
+_PROBE_CACHE_TTL = 5.0
+"""HEAD 探测结果的缓存有效期 (秒)."""
 
 class _FingerprintPicker:
     """按 host 选 TLS 指纹: 换过的指纹对该 host 保持, 后续请求不再试探原指纹.
@@ -240,6 +242,11 @@ class WebClient:
         self._chunked_threshold = chunked_threshold
         self._chunk_size = chunk_size
         self._download_concurrency = download_concurrency
+        self._probe_lock = asyncio.Lock()
+        self._probe_cache: dict[
+            tuple[str, bool],
+            tuple[asyncio.Future[tuple[int | None, str]], float | None],
+        ] = {}
         self._fingerprints = _FingerprintPicker(_IMPERSONATE_OPTIONS)
         self._session = AsyncSession(
             max_clients=max_clients,
@@ -605,6 +612,46 @@ class WebClient:
 
     async def _probe(self, url: str, *, use_proxy: bool, egress: EgressPolicy | None = None) -> tuple[int | None, str]:
         """HEAD 探测 Content-Length 与重定向终址; 探测失败时终址回退为 ``url``."""
+        if egress is not None:
+            return await self._probe_uncached(url, use_proxy=use_proxy, egress=egress)
+
+        inflight = False
+        key = (url, use_proxy)
+        future: asyncio.Future[tuple[int | None, str]] | None = None
+        async with self._probe_lock:
+            cache = self._probe_cache.get(key)
+            if cache is not None:
+                # 请求中或结果尚未过期时复用同一个 Future
+                if cache[1] is None or cache[1] > time.monotonic():
+                    inflight = True
+                    future = cache[0]
+                else:
+                    del self._probe_cache[key]
+            if future is None:
+                future = asyncio.get_running_loop().create_future()
+                self._probe_cache[key] = (future, None)
+
+        assert future is not None
+        if inflight:
+            return await asyncio.shield(future)
+
+        try:
+            result = await self._probe_uncached(url, use_proxy=use_proxy, egress=None)
+            future.set_result(result)
+            async with self._probe_lock:
+                self._probe_cache[key] = (future, time.monotonic() + _PROBE_CACHE_TTL)
+            return result
+        except BaseException as e:
+            if not future.done():
+                future.set_exception(e)
+                future.exception()
+            async with self._probe_lock:
+                self._probe_cache.pop(key, None)
+            raise
+
+    async def _probe_uncached(
+        self, url: str, *, use_proxy: bool, egress: EgressPolicy | None
+    ) -> tuple[int | None, str]:
         try:
             resp = await self.request("HEAD", url, use_proxy=use_proxy, egress=egress)
         except RequestError:

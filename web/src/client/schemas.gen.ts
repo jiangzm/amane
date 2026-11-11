@@ -3577,6 +3577,7 @@ export const HotSettingsSchema = {
         network: {
             $ref: '#/components/schemas/NetworkConfig',
             default: {
+                proxies: [],
                 timeout: 10,
                 max_retries: 2,
                 max_clients: 50,
@@ -6588,6 +6589,13 @@ export const NetworkConfigSchema = {
                 }
             ],
             title: 'Proxy'
+        },
+        proxies: {
+            items: {
+                type: 'string'
+            },
+            type: 'array',
+            title: 'Proxies'
         },
         timeout: {
             type: 'number',

@@ -10260,6 +10260,7 @@
           "network": {
             "$ref": "#/components/schemas/NetworkConfig",
             "default": {
+              "proxies": [],
               "timeout": 10.0,
               "max_retries": 2,
               "max_clients": 50,
@@ -13226,6 +13227,13 @@
               }
             ],
             "title": "Proxy"
+          },
+          "proxies": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Proxies"
           },
           "timeout": {
             "type": "number",

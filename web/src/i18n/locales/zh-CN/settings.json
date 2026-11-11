@@ -490,6 +490,10 @@
         "label": "代理",
         "description": "HTTP/SOCKS5 代理地址 (如 socks5://127.0.0.1:1080)"
       },
+      "proxies": {
+        "label": "代理",
+        "description": "HTTP/SOCKS5 代理地址 (如 socks5://127.0.0.1:1080)"
+      },
       "timeout": {
         "label": "请求超时",
         "description": "HTTP 请求默认超时时间 (秒)"

@@ -221,6 +221,7 @@ class WebClient:
         self,
         *,
         proxy: str | None = None,
+        proxies: tuple[str, ...] | list[str] | None = None,
         proxy_overrides: Mapping[str, str | None] | None = None,
         timeout: float = 30.0,
         max_retries: int = 2,
@@ -232,7 +233,9 @@ class WebClient:
         download_concurrency: int = 10,
     ):
         self._proxy = proxy
+        self._proxies = tuple(proxies or ())
         self._proxy_overrides = dict(proxy_overrides or {})
+        self._proxy_counters: dict[str, int] = {}
         self._timeout = timeout
         self._max_retries = max_retries
         self._limiters = limiters
@@ -259,6 +262,14 @@ class WebClient:
         """该 host 实际使用的代理: 站点级设定优先, 含显式直连 (值为 ``None``)."""
         if host in self._proxy_overrides:
             return self._proxy_overrides[host]
+
+        if self._proxies:
+            choices = self._proxies
+            key = host or "*"
+            index = self._proxy_counters.get(key, 0)
+            self._proxy_counters[key] = (index + 1) % len(choices)
+            return choices[index]
+
         return self._proxy
 
     async def request(
@@ -379,6 +390,7 @@ class WebClient:
             resp = None
             impersonate = self._fingerprints.select(key)
             should_retry = False
+            proxy = self._proxy_for(host) if use_proxy else None
             try:
                 resp = await self._session.request(
                     method,
@@ -387,7 +399,7 @@ class WebClient:
                     cookies=cookies,
                     data=data,
                     json=json,
-                    proxy=self._proxy_for(host) if use_proxy else None,
+                    proxy=proxy,
                     timeout=timeout or self._timeout,
                     allow_redirects=allow_redirects,
                     impersonate=impersonate,
@@ -405,7 +417,7 @@ class WebClient:
                 failure = RequestFailure(
                     kind=FailureKind.HTTP_STATUS,
                     status=resp.status_code,
-                    message=f"HTTP {resp.status_code}",
+                    message=f"HTTP {resp.status_code}, via {proxy if proxy else 'direct'}",
                     body=_failure_body(resp),
                 )
                 should_retry = resp.status_code in _RETRYABLE_STATUS_CODES
@@ -450,6 +462,7 @@ class WebClient:
                 max_retries=attempts,
                 error=failure.message if failure else None,
                 retry_in=wait,
+                proxy=proxy,
             )
             await self._close(resp)
             await asyncio.sleep(wait)
@@ -462,6 +475,7 @@ class WebClient:
             url=url,
             error=failure.message if failure else None,
             attempts=sent,
+            proxy=proxy,
             duration_s=round(time.monotonic() - t0, 2),
         )
         self._record_exchange(method, url, resp=resp, error=failure.message if failure else None, t0=t0, attempts=sent)
@@ -622,6 +636,12 @@ class WebClient:
         size, _ = await self._probe(url, use_proxy=use_proxy)
         return size
 
+    async def probe_resource(
+        self, url: str, *, use_proxy: bool = True, egress: EgressPolicy | None = None
+    ) -> tuple[int | None, str]:
+        """探测下载资源的大小与重定向终址."""
+        return await self._probe(url, use_proxy=use_proxy, egress=egress)
+
     async def resolve_final_url(self, url: str, *, use_proxy: bool = True, egress: EgressPolicy | None = None) -> str:
         """跟随重定向后的终址; 探测失败时返回 ``url``.
 
@@ -638,6 +658,7 @@ class WebClient:
         use_proxy: bool = True,
         egress: EgressPolicy | None = None,
         max_bytes: int | None = None,
+        file_size: int | None = None,
     ) -> bool:
         """下载. 分块阈值、分片大小与并发数取自 ``network`` 配置. 失败返回 False, 并按状态与原因记日志.
 
@@ -648,7 +669,8 @@ class WebClient:
         if max_bytes is not None:
             return await self._download_bounded(url, dest, use_proxy=use_proxy, egress=egress, max_bytes=max_bytes)
 
-        file_size, _ = await self._probe(url, use_proxy=use_proxy, egress=egress)
+        if file_size is None:
+            file_size, _ = await self._probe(url, use_proxy=use_proxy, egress=egress)
 
         if file_size and file_size > self._chunked_threshold:
             return await self._download_chunked(url, dest, file_size, use_proxy=use_proxy, egress=egress)
@@ -749,7 +771,10 @@ class WebClient:
                     resp = await self.request(
                         "GET",
                         url,
-                        headers={"Range": f"bytes={start}-{end}"},
+                        headers={
+                            "Range": f"bytes={start}-{end}",
+                            "Connection": "close"
+                        },
                         use_proxy=use_proxy,
                         egress=egress,
                     )

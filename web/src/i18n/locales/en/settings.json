@@ -490,6 +490,10 @@
         "label": "Proxy",
         "description": "HTTP/SOCKS5 proxy address (e.g. socks5://127.0.0.1:1080)"
       },
+      "proxies": {
+        "label": "Proxies",
+        "description": "HTTP/SOCKS5 proxy addresses (e.g. socks5://127.0.0.1:1080)"
+      },
       "timeout": {
         "label": "Request Timeout",
         "description": "Default HTTP request timeout (seconds)"

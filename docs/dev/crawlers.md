@@ -79,7 +79,7 @@ CrawlerFactory (缓存实例)
 
 ## 代理
 
-`WebClient` 按 host 解析代理: `scraping.site_config[site].proxy` 覆盖全局 `network.proxy`; 站点 `use_proxy=false` 表示该站点的 host 直连, 站点代理与全局代理都不使用. host 取自来源 profile 的 URL 与配置的 `base_url`, 与限速器是同一份集合, 不在其中的 host (CDN 等) 仍走全局代理; 多个站点共享 host 时按注册顺序最后一次写入生效. 代理按请求传入, 会话与 cookie 不随代理拆分; 调用方传 `use_proxy=False` 时强制直连, 站点级配置不参与 (本机 solver 服务用).
+`WebClient` 按 host 解析代理: `scraping.site_config[site].proxy` 覆盖全局代理; 无站点覆盖时优先轮询 `network.proxies`, 列表为空才使用 `network.proxy`. 站点 `use_proxy=false` 表示该站点的 host 直连. host 取自来源 profile 的 URL 与配置的 `base_url`, 与限速器是同一份集合, 不在其中的 host (CDN 等) 仍使用全局代理; 多个站点共享 host 时按注册顺序最后一次写入生效. 代理按请求传入, 会话与 cookie 不随代理拆分; 调用方传 `use_proxy=False` 时强制直连 (本机 solver 服务用).
 
 浏览器通道 (patchright / camoufox / solver) 只有全局 `network.proxy`: 本地后端的代理由浏览器启动参数决定, solver 的代理属于该服务自身配置. 站点代理与站点级 `use_proxy` 都不改变它, 因此浏览器池的重建判据仍只看全局配置.
 

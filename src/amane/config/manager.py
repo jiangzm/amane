@@ -605,6 +605,14 @@ class BrowserConfig(BaseModel):
 
 class NetworkConfig(BaseModel):
     proxy: str | None = None
+    proxies: list[str] = Field(default_factory=list)
+
+    @field_validator("proxies")
+    @classmethod
+    def _validate_proxies(cls, v: list[str]) -> list[str]:
+        if any(not item.strip() for item in v):
+            raise ValueError("代理地址列表不能包含空地址")
+        return [_validate_proxy_url(item) or "" for item in v]
     timeout: float = Field(default=10.0, ge=5.0, le=300.0)
     max_retries: int = Field(default=2, ge=0, le=10)
     """首次请求之外的重试次数 (``2`` → 最多发 3 次请求); 0 表示不重试. 名字为兼容既有配置保留."""

@@ -131,6 +131,7 @@ def build_network_stack(
     )
     web_client = WebClient(
         proxy=hot.network.proxy,
+        proxies=hot.network.proxies,
         proxy_overrides=site_proxy_overrides(hot.scraping.site_config, site_urls),
         timeout=hot.network.timeout,
         max_retries=hot.network.max_retries,

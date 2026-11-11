@@ -3305,6 +3305,10 @@ export type NetworkConfig = {
      */
     proxy?: string | null;
     /**
+     * Proxies
+     */
+    proxies?: Array<string>;
+    /**
      * Timeout
      */
     timeout?: number;

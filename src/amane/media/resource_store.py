@@ -210,7 +210,7 @@ class ResourceStore:
             return cached
 
         # 上游改派占位图时跳过, 不占用 dest 也不写记录.
-        final_url = await client.resolve_final_url(url, egress=egress)
+        file_size, final_url = await client.probe_resource(url, egress=egress)
         if _is_placeholder_url(final_url):
             logger.warning("resource is upstream placeholder", url=url, final_url=final_url)
             return None
@@ -226,7 +226,7 @@ class ResourceStore:
         # 临时文件保留原扩展名: download 的实现可能按扩展名决定写出的格式.
         tmp = dest.with_name(f"{dest.stem}.{uuid4().hex}.part{dest.suffix}")
         try:
-            if not await client.download(url, tmp, egress=egress, max_bytes=max_bytes):
+            if not await client.download(url, tmp, egress=egress, max_bytes=max_bytes, file_size=file_size):
                 logger.warning("resource download failed", url=url, host=urlsplit(url).hostname)
                 return None
             mime = detect_media_type(tmp)

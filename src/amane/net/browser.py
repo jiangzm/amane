@@ -39,6 +39,8 @@ _MAX_CONCURRENCY = 2
 # solver 的 HTTP 调用在服务端等待挑战之外留出的余量 (秒), 以及会话建立 / 销毁的调用时限.
 _SOLVER_HTTP_SLACK_S = 10.0
 _SOLVER_SESSION_TIMEOUT_S = 15.0
+# solver 会话的 IDLE
+_SOLVER_SESSION_IDLE_MINUTES = 10
 
 
 class BrowserBackend(Protocol):
@@ -523,6 +525,7 @@ class SolverBackend:
         self._url = url.rstrip("/")
         self._default_timeout = default_timeout
         self._sessions: set[str] = set()
+        self._idle_tasks: dict[str, asyncio.Task[None]] = {}
         self._semaphore = asyncio.Semaphore(_MAX_CONCURRENCY)
         self._scope_locks: dict[str, asyncio.Lock] = {}
         self._lock = asyncio.Lock()
@@ -545,6 +548,7 @@ class SolverBackend:
         async with self._semaphore, self._lock_for(scope):
             try:
                 await self._ensure_session(scope)
+                self._schedule_idle(scope)
                 data = await self._request_get(url, scope, effective, cookies)
             except RequestError as exc:
                 return None, exc.failure or RequestFailure(kind=FailureKind.UNEXPECTED, message=exc.message)
@@ -554,6 +558,7 @@ class SolverBackend:
                     self._sessions.discard(scope)
                     try:
                         await self._ensure_session(scope)
+                        self._schedule_idle(scope)
                         data = await self._request_get(url, scope, effective, cookies)
                     except RequestError as exc:
                         return None, exc.failure or RequestFailure(kind=FailureKind.UNEXPECTED, message=exc.message)
@@ -569,6 +574,24 @@ class SolverBackend:
             if not isinstance(html, str):
                 return None, RequestFailure(kind=FailureKind.UNEXPECTED, message="solver solution has no response")
             return html, None
+
+    def _schedule_idle(self, scope: str) -> None:
+        task = self._idle_tasks.pop(scope, None)
+        if task is not None:
+            task.cancel()
+        if not self._closed and scope in self._sessions:
+            self._idle_tasks[scope] = asyncio.create_task(self._expire_session(scope))
+
+    async def _expire_session(self, scope: str) -> None:
+        try:
+            await asyncio.sleep(_SOLVER_SESSION_IDLE_MINUTES * 60)
+            async with self._lock_for(scope):
+                self._idle_tasks.pop(scope, None)
+                if scope in self._sessions:
+                    self._sessions.discard(scope)
+                    await self._destroy_session(scope)
+        except asyncio.CancelledError:
+            pass
 
     def _lock_for(self, scope: str) -> asyncio.Lock:
         """会话级互斥: 一个会话只有一个浏览器标签, 并发请求会互相读到对方导航的正文."""
@@ -638,6 +661,10 @@ class SolverBackend:
 
     async def close(self) -> None:
         self._closed = True
+        tasks = list(self._idle_tasks.values())
+        self._idle_tasks.clear()
+        for task in tasks:
+            task.cancel()
         sessions = list(self._sessions)
         self._sessions.clear()
         await asyncio.gather(*(self._destroy_session(scope) for scope in sessions))
